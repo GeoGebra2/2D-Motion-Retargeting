@@ -175,3 +175,78 @@ def openpose2motion(json_dir, scale=1.0, smooth=True, max_frame=None):
 
 def get_foot_vel(batch_motion, foot_idx):
     return batch_motion[:, foot_idx, 1:] - batch_motion[:, foot_idx, :-1] + batch_motion[:, -2:, 1:].repeat(1, 2, 1)
+
+
+def _ntu_read_skeleton(file_path, max_frame=None, body_index=0):
+    with open(file_path, 'r') as f:
+        nr_frames = int(f.readline().strip())
+        frames = []
+        for fi in range(nr_frames):
+            if max_frame is not None and fi >= max_frame:
+                break
+            n_bodies = int(f.readline().strip())
+            bodies = []
+            for _ in range(n_bodies):
+                _ = f.readline()
+                n_joints = int(f.readline().strip())
+                joints = []
+                for _ in range(n_joints):
+                    parts = f.readline().strip().split()
+                    if len(parts) < 3:
+                        joints.append([0.0, 0.0, 0.0])
+                    else:
+                        x = float(parts[0]); y = float(parts[1]); z = float(parts[2])
+                        joints.append([x, y, z])
+                bodies.append(np.array(joints, dtype=np.float32))
+            if len(bodies) == 0:
+                bodies = [np.zeros((25, 3), dtype=np.float32)]
+            bi = min(body_index, len(bodies) - 1)
+            frames.append(bodies[bi])
+        if len(frames) == 0:
+            return np.zeros((25, 3, 0), dtype=np.float32)
+        data = np.stack(frames, axis=0)
+        data = np.transpose(data, (1, 2, 0))
+        return data
+
+
+def _ntu25_to_base15(motion3d_25):
+    idx_map = [3, 2, 8, 9, 10, 4, 5, 6, 0, 16, 17, 18, 12, 13, 14]
+    sel = motion3d_25[idx_map, :, :]
+    return sel
+
+
+def ntu2motion(file_path, smooth=True, max_frame=None):
+    m3d_25 = _ntu_read_skeleton(file_path, max_frame=max_frame)
+    m3d_15 = _ntu25_to_base15(m3d_25)
+    local3d = get_local3d(m3d_15, None)
+    motion2d = trans_motion3d(m3d_15, local3d)
+    if smooth:
+        motion2d = gaussian_filter1d(motion2d, sigma=2, axis=-1)
+    return motion2d
+
+
+def base15_to_ntu25_2d(motion2d_15):
+    T = motion2d_15.shape[-1]
+    out = np.zeros((25, 3, T), dtype=np.float32)
+    idx_map = [3, 2, 8, 9, 10, 4, 5, 6, 0, 16, 17, 18, 12, 13, 14]
+    for i, idx in enumerate(idx_map):
+        out[idx, 0, :] = motion2d_15[i, 0, :]
+        out[idx, 1, :] = motion2d_15[i, 1, :]
+        out[idx, 2, :] = 0.0
+    return out
+
+
+def write_ntu_skeleton(save_path, motion3d_25):
+    J, C, T = motion3d_25.shape
+    with open(save_path, 'w') as f:
+        f.write(str(T) + '\n')
+        for t in range(T):
+            f.write('1\n')
+            f.write('0 0 0 0 0 0 0 0 0 0\n')
+            f.write(str(J) + '\n')
+            for j in range(J):
+                x = motion3d_25[j, 0, t]
+                y = motion3d_25[j, 1, t]
+                z = motion3d_25[j, 2, t]
+                line = f"{x:.6f} {y:.6f} {z:.6f} 0 0 0 0 1 0 0 0 1\n"
+                f.write(line)

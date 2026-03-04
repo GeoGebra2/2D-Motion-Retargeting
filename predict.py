@@ -1,4 +1,5 @@
 import os
+import re
 from scipy.ndimage import gaussian_filter1d
 import torch
 import argparse
@@ -6,38 +7,38 @@ import numpy as np
 from dataset import get_meanpose
 from model import get_autoencoder
 from functional.visualization import motion2video, hex2rgb
-from functional.motion import preprocess_motion2d, postprocess_motion2d, openpose2motion
+from functional.motion import preprocess_motion2d, postprocess_motion2d, openpose2motion, ntu2motion, base15_to_ntu25_2d, write_ntu_skeleton
 from functional.utils import ensure_dir, pad_to_height
 from common import config
 
 
 def handle2x(config, args):
-    # resize input
     h1, w1, scale1 = pad_to_height(config.img_size[0], args.img1_height, args.img1_width)
     h2, w2, scale2 = pad_to_height(config.img_size[0], args.img2_height, args.img2_width)
 
-    # load trained model
     net = get_autoencoder(config)
     net.load_state_dict(torch.load(args.model_path))
     net.to(config.device)
     net.eval()
 
-    # mean/std pose
     mean_pose, std_pose = get_meanpose(config)
 
-    # get input
-    input1 = openpose2motion(args.vid1_json_dir, scale=scale1, max_frame=args.max_length)
-    input2 = openpose2motion(args.vid2_json_dir, scale=scale2, max_frame=args.max_length)
+    if args.vid1_json_dir is not None:
+        input1 = openpose2motion(args.vid1_json_dir, scale=scale1, max_frame=args.max_length)
+    else:
+        input1 = ntu2motion(args.ntu1, max_frame=args.max_length)
+    if args.vid2_json_dir is not None:
+        input2 = openpose2motion(args.vid2_json_dir, scale=scale2, max_frame=args.max_length)
+    else:
+        input2 = ntu2motion(args.ntu2, max_frame=args.max_length)
     input1 = preprocess_motion2d(input1, mean_pose, std_pose)
     input2 = preprocess_motion2d(input2, mean_pose, std_pose)
     input1 = input1.to(config.device)
     input2 = input2.to(config.device)
 
-    # transfer by network
     out12 = net.transfer(input1, input2)
     out21 = net.transfer(input2, input1)
 
-    # postprocessing the outputs
     input1 = postprocess_motion2d(input1, mean_pose, std_pose, w1 // 2, h1 // 2)
     input2 = postprocess_motion2d(input2, mean_pose, std_pose, w2 // 2, h2 // 2)
     out12 = postprocess_motion2d(out12, mean_pose, std_pose, w2 // 2, h2 // 2)
@@ -57,6 +58,28 @@ def handle2x(config, args):
                  input2=input2,
                  out12=out12,
                  out21=out21)
+        if getattr(args, 'save_skeleton', False):
+            def parse_codes(name):
+                m = re.search(r'S(\d{3})C(\d{3})P(\d{3})R(\d{3})A(\d{3})', name)
+                if not m:
+                    return None
+                return {'S': m.group(1), 'C': m.group(2), 'P': m.group(3), 'R': m.group(4), 'A': m.group(5)}
+            def build_name(c):
+                return f"S{c['S']}C{c['C']}P{c['P']}R{c['R']}A{c['A']}.skeleton"
+            out12_name = 'out12.skeleton'
+            out21_name = 'out21.skeleton'
+            if args.ntu1 is not None and args.ntu2 is not None:
+                ca = parse_codes(os.path.basename(args.ntu1))
+                cb = parse_codes(os.path.basename(args.ntu2))
+                if ca and cb:
+                    c12 = {'S': cb['S'], 'C': cb['C'], 'P': cb['P'], 'R': cb['R'], 'A': ca['A']}
+                    c21 = {'S': ca['S'], 'C': ca['C'], 'P': ca['P'], 'R': ca['R'], 'A': cb['A']}
+                    out12_name = build_name(c12)
+                    out21_name = build_name(c21)
+            out12_25 = base15_to_ntu25_2d(out12)
+            out21_25 = base15_to_ntu25_2d(out21)
+            write_ntu_skeleton(os.path.join(save_dir, out12_name), out12_25)
+            write_ntu_skeleton(os.path.join(save_dir, out21_name), out21_25)
         if args.render_video:
             print("Generating videos...")
             motion2video(input1, h1, w1, os.path.join(save_dir, 'input1.mp4'), color1, args.transparency,
@@ -71,24 +94,29 @@ def handle2x(config, args):
 
 
 def handle3x(config, args):
-    # resize input
     h1, w1, scale1 = pad_to_height(config.img_size[0], args.img1_height, args.img1_width)
     h2, w2, scale2 = pad_to_height(config.img_size[0], args.img2_height, args.img2_width)
     h3, w3, scale3 = pad_to_height(config.img_size[0], args.img2_height, args.img3_width)
 
-    # load trained model
     net = get_autoencoder(config)
     net.load_state_dict(torch.load(args.model_path))
     net.to(config.device)
     net.eval()
 
-    # mean/std pose
     mean_pose, std_pose = get_meanpose(config)
 
-    # get input
-    input1 = openpose2motion(args.vid1_json_dir, scale=scale1, max_frame=args.max_length)
-    input2 = openpose2motion(args.vid2_json_dir, scale=scale2, max_frame=args.max_length)
-    input3 = openpose2motion(args.vid3_json_dir, scale=scale3, max_frame=args.max_length)
+    if args.vid1_json_dir is not None:
+        input1 = openpose2motion(args.vid1_json_dir, scale=scale1, max_frame=args.max_length)
+    else:
+        input1 = ntu2motion(args.ntu1, max_frame=args.max_length)
+    if args.vid2_json_dir is not None:
+        input2 = openpose2motion(args.vid2_json_dir, scale=scale2, max_frame=args.max_length)
+    else:
+        input2 = ntu2motion(args.ntu2, max_frame=args.max_length)
+    if args.vid3_json_dir is not None:
+        input3 = openpose2motion(args.vid3_json_dir, scale=scale3, max_frame=args.max_length)
+    else:
+        input3 = ntu2motion(args.ntu3, max_frame=args.max_length)
     input1 = preprocess_motion2d(input1, mean_pose, std_pose)
     input2 = preprocess_motion2d(input2, mean_pose, std_pose)
     input3 = preprocess_motion2d(input3, mean_pose, std_pose)
@@ -96,10 +124,8 @@ def handle3x(config, args):
     input2 = input2.to(config.device)
     input3 = input3.to(config.device)
 
-    # transfer by network
     out = net.transfer_three(input1, input2, input3)
 
-    # postprocessing the outputs
     input1 = postprocess_motion2d(input1, mean_pose, std_pose, w1 // 2, h1 // 2)
     input2 = postprocess_motion2d(input2, mean_pose, std_pose, w2 // 2, h2 // 2)
     input3 = postprocess_motion2d(input3, mean_pose, std_pose, w2 // 2, h2 // 2)
@@ -119,6 +145,18 @@ def handle3x(config, args):
                  input2=input2,
                  input3=input3,
                  out=out)
+        if getattr(args, 'save_skeleton', False):
+            out_name = 'out.skeleton'
+            if args.ntu1 is not None and args.ntu2 is not None:
+                m1 = re.search(r'S(\d{3})C(\d{3})P(\d{3})R(\d{3})A(\d{3})', os.path.basename(args.ntu1) or '')
+                m2 = re.search(r'S(\d{3})C(\d{3})P(\d{3})R(\d{3})A(\d{3})', os.path.basename(args.ntu2) or '')
+                m3 = re.search(r'S(\d{3})C(\d{3})P(\d{3})R(\d{3})A(\d{3})', os.path.basename(args.ntu3) or '') if getattr(args, 'ntu3', None) else None
+                if m1 and m2:
+                    c_code = m3.group(2) if m3 else m2.group(2)
+                    c = {'S': m2.group(1), 'C': c_code, 'P': m2.group(3), 'R': m2.group(4), 'A': m1.group(5)}
+                    out_name = f"S{c['S']}C{c['C']}P{c['P']}R{c['R']}A{c['A']}.skeleton"
+            out_25 = base15_to_ntu25_2d(out)
+            write_ntu_skeleton(os.path.join(save_dir, out_name), out_25)
         if args.render_video:
             print("Generating videos...")
             motion2video(input1, h1, w1, os.path.join(save_dir,'input1.mp4'), color1, args.transparency,
@@ -141,6 +179,10 @@ def main():
     parser.add_argument('-v1', '--vid1_json_dir', type=str, help="video1's openpose json directory")
     parser.add_argument('-v2', '--vid2_json_dir', type=str, help="video2's openpose json directory")
     parser.add_argument('-v3', '--vid3_json_dir', type=str, help="video3's openpose json directory")
+    parser.add_argument('--ntu1', type=str, help="ntu skeleton file for input1")
+    parser.add_argument('--ntu2', type=str, help="ntu skeleton file for input2")
+    parser.add_argument('--ntu3', type=str, help="ntu skeleton file for input3")
+    parser.add_argument('--save_skeleton', action='store_true', help="save outputs as NTU .skeleton files")
     parser.add_argument('-h1', '--img1_height', type=int, help="video1's height")
     parser.add_argument('-w1', '--img1_width', type=int, help="video1's width")
     parser.add_argument('-h2', '--img2_height', type=int, help="video2's height")
