@@ -128,3 +128,11 @@ If you use this code for your research, please cite our paper:
 }
 
 ```
+
+NTU扩展批量处理脚本
+`python scripts/ntu_batch_retarget.py ^
+  --ntu_root "D:\NTU\skel_root" ^
+  --model_path "model\pretrained_skeleton.pth" ^
+  --out_root "outputs\ntu-batch" ^
+  --height 720 --width 1280 ^
+  --max_length 120`
