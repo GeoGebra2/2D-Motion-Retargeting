@@ -5,6 +5,7 @@ import argparse
 import subprocess
 from collections import defaultdict
 from glob import glob
+from tqdm import tqdm
 
 
 NTU_PATTERN = re.compile(r"S(\d{3})C(\d{3})P(\d{3})R(\d{3})A(\d{3})", re.IGNORECASE)
@@ -109,10 +110,10 @@ def main():
 
     print(f"Found {len(persons)} persons, {len(all_actions)} actions in dataset.")
 
-    total_jobs = 0
     all_records = []
     for recs in persons.values():
         all_records.extend(recs)
+    tasks = []
     for p, p_records in sorted(persons.items()):
         out_dir_person = os.path.join(args.out_root, f"P{p}")
         ensure_dir(out_dir_person)
@@ -122,23 +123,24 @@ def main():
                 out_name = expected_out_name_for_2input(src, tgt)
                 out_path = os.path.join(out_dir_person, out_name)
                 if os.path.exists(out_path):
-                    print(f"[Skip exists] {out_path}")
                     continue
-                print(f"[Plan] tgt={tgt['name']} <= src={src['name']}")
-                if not args.dry_run:
-                    try:
-                        run_predict(
-                            args.python, repo_root, args.model_path,
-                            src["path"], tgt["path"],
-                            out_dir_person, args.height, args.width, args.max_length,
-                            fname_suffix=src["P"], no_video=True, only_out12=True
-                        )
-                    except subprocess.CalledProcessError as e:
-                        print(f"[Error] Retarget failed for P{p} A{src['A']}: {e}")
-                        continue
-                total_jobs += 1
+                tasks.append((p, out_dir_person, tgt, src, out_path))
 
-    print(f"Done. Total retarget jobs executed/planned: {total_jobs}")
+    for (_, out_dir_person, tgt, src, out_path) in tqdm(tasks, desc="Retarget", unit="job"):
+        print(f"[Plan] tgt={tgt['name']} <= src={src['name']} -> {out_path}")
+        if not args.dry_run:
+            try:
+                run_predict(
+                    args.python, repo_root, args.model_path,
+                    src["path"], tgt["path"],
+                    out_dir_person, args.height, args.width, args.max_length,
+                    fname_suffix=src["P"], no_video=True, only_out12=True
+                )
+            except subprocess.CalledProcessError as e:
+                print(f"[Error] Retarget failed for P{tgt['P']} A{src['A']}: {e}")
+                continue
+
+    print(f"Done. Total retarget jobs executed/planned: {len(tasks)}")
 
 
 if __name__ == "__main__":
