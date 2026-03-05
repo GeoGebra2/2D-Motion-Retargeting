@@ -37,27 +37,35 @@ def handle2x(config, args):
     input2 = input2.to(config.device)
 
     out12 = net.transfer(input1, input2)
-    out21 = net.transfer(input2, input1)
+    out21 = None if args.only_out12 else net.transfer(input2, input1)
 
     input1 = postprocess_motion2d(input1, mean_pose, std_pose, w1 // 2, h1 // 2)
     input2 = postprocess_motion2d(input2, mean_pose, std_pose, w2 // 2, h2 // 2)
     out12 = postprocess_motion2d(out12, mean_pose, std_pose, w2 // 2, h2 // 2)
-    out21 = postprocess_motion2d(out21, mean_pose, std_pose, w1 // 2, h1 // 2)
+    if out21 is not None:
+        out21 = postprocess_motion2d(out21, mean_pose, std_pose, w1 // 2, h1 // 2)
 
     if not args.disable_smooth:
         out12 = gaussian_filter1d(out12, sigma=2, axis=-1)
-        out21 = gaussian_filter1d(out21, sigma=2, axis=-1)
+        if out21 is not None:
+            out21 = gaussian_filter1d(out21, sigma=2, axis=-1)
 
     if args.out_dir is not None:
         save_dir = args.out_dir
         ensure_dir(save_dir)
         color1 = hex2rgb(args.color1)
         color2 = hex2rgb(args.color2)
-        np.savez(os.path.join(save_dir, 'results.npz'),
-                 input1=input1,
-                 input2=input2,
-                 out12=out12,
-                 out21=out21)
+        if args.only_out12:
+            np.savez(os.path.join(save_dir, 'results.npz'),
+                     input1=input1,
+                     input2=input2,
+                     out12=out12)
+        else:
+            np.savez(os.path.join(save_dir, 'results.npz'),
+                     input1=input1,
+                     input2=input2,
+                     out12=out12,
+                     out21=out21)
         if getattr(args, 'save_skeleton', False):
             def parse_codes(name):
                 m = re.search(r'S(\d{3})C(\d{3})P(\d{3})R(\d{3})A(\d{3})', name)
@@ -76,11 +84,19 @@ def handle2x(config, args):
                     c21 = {'S': ca['S'], 'C': ca['C'], 'P': ca['P'], 'R': ca['R'], 'A': cb['A']}
                     out12_name = build_name(c12)
                     out21_name = build_name(c21)
+            if getattr(args, 'fname_suffix', None):
+                suf = str(args.fname_suffix)
+                if suf:
+                    if out12_name.endswith('.skeleton'):
+                        out12_name = out12_name[:-9] + f"F{suf}.skeleton"
+                    if (not args.only_out12) and out21_name.endswith('.skeleton'):
+                        out21_name = out21_name[:-9] + f"F{suf}.skeleton"
             out12_25 = base15_to_ntu25_2d(out12)
-            out21_25 = base15_to_ntu25_2d(out21)
             write_ntu_skeleton(os.path.join(save_dir, out12_name), out12_25)
-            write_ntu_skeleton(os.path.join(save_dir, out21_name), out21_25)
-        if args.render_video:
+            if not args.only_out12:
+                out21_25 = base15_to_ntu25_2d(out21)
+                write_ntu_skeleton(os.path.join(save_dir, out21_name), out21_25)
+        if (not args.no_video) and args.render_video:
             print("Generating videos...")
             motion2video(input1, h1, w1, os.path.join(save_dir, 'input1.mp4'), color1, args.transparency,
                          fps=args.fps, save_frame=args.save_frame)
@@ -88,8 +104,9 @@ def handle2x(config, args):
                          fps=args.fps, save_frame=args.save_frame)
             motion2video(out12, h2, w2, os.path.join(save_dir,'out12.mp4'), color2, args.transparency,
                          fps=args.fps, save_frame=args.save_frame)
-            motion2video(out21, h1, w1, os.path.join(save_dir,'out21.mp4'), color1, args.transparency,
-                         fps=args.fps, save_frame=args.save_frame)
+            if not args.only_out12:
+                motion2video(out21, h1, w1, os.path.join(save_dir,'out21.mp4'), color1, args.transparency,
+                             fps=args.fps, save_frame=args.save_frame)
     print("Done.")
 
 
@@ -155,9 +172,13 @@ def handle3x(config, args):
                     c_code = m3.group(2) if m3 else m2.group(2)
                     c = {'S': m2.group(1), 'C': c_code, 'P': m2.group(3), 'R': m2.group(4), 'A': m1.group(5)}
                     out_name = f"S{c['S']}C{c['C']}P{c['P']}R{c['R']}A{c['A']}.skeleton"
+            if getattr(args, 'fname_suffix', None):
+                suf = str(args.fname_suffix)
+                if suf and out_name.endswith('.skeleton'):
+                    out_name = out_name[:-9] + f"F{suf}.skeleton"
             out_25 = base15_to_ntu25_2d(out)
             write_ntu_skeleton(os.path.join(save_dir, out_name), out_25)
-        if args.render_video:
+        if (not args.no_video) and args.render_video:
             print("Generating videos...")
             motion2video(input1, h1, w1, os.path.join(save_dir,'input1.mp4'), color1, args.transparency,
                          fps=args.fps, save_frame=args.save_frame)
@@ -183,6 +204,9 @@ def main():
     parser.add_argument('--ntu2', type=str, help="ntu skeleton file for input2")
     parser.add_argument('--ntu3', type=str, help="ntu skeleton file for input3")
     parser.add_argument('--save_skeleton', action='store_true', help="save outputs as NTU .skeleton files")
+    parser.add_argument('--fname_suffix', type=str, help="append Fxxx to skeleton filename (e.g., 001)")
+    parser.add_argument('--only_out12', action='store_true', help="only save/compute out12 in 2-input mode")
+    parser.add_argument('--no_video', action='store_true', help="do not render videos")
     parser.add_argument('-h1', '--img1_height', type=int, help="video1's height")
     parser.add_argument('-w1', '--img1_width', type=int, help="video1's width")
     parser.add_argument('-h2', '--img2_height', type=int, help="video2's height")

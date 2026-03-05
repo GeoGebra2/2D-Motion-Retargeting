@@ -50,18 +50,11 @@ def choose_target_skeleton(records_for_person):
     return recs[0]
 
 
-def choose_source_for_action(action_records, target_p):
-    for rec in sorted(action_records, key=lambda r: (r["R"], r["C"], r["S"], r["P"])):
-        if rec["P"] != target_p:
-            return rec
-    return None
-
-
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
 
 
-def run_predict(python_exec, repo_root, model_path, ntu_src, ntu_tgt, out_dir, height, width, max_length):
+def run_predict(python_exec, repo_root, model_path, ntu_src, ntu_tgt, out_dir, height, width, max_length, fname_suffix=None, no_video=False, only_out12=False):
     predict_py = os.path.join(repo_root, "predict.py")
     cmd = [
         python_exec, predict_py,
@@ -75,11 +68,27 @@ def run_predict(python_exec, repo_root, model_path, ntu_src, ntu_tgt, out_dir, h
         "--save_skeleton",
         "--max_length", str(max_length),
     ]
+    if fname_suffix:
+        cmd.extend(["--fname_suffix", fname_suffix])
+    if no_video:
+        cmd.append("--no_video")
+    if only_out12:
+        cmd.append("--only_out12")
     subprocess.run(cmd, check=True)
 
 
 def expected_out_name_for_2input(src_rec, tgt_rec):
-    return f"S{tgt_rec['S']}C{tgt_rec['C']}P{tgt_rec['P']}R{tgt_rec['R']}A{src_rec['A']}.skeleton"
+    return f"S{tgt_rec['S']}C{tgt_rec['C']}P{tgt_rec['P']}R{tgt_rec['R']}A{src_rec['A']}F{src_rec['P']}.skeleton"
+
+
+def choose_sources_same_sc(target_rec, all_records):
+    out = []
+    for rec in all_records:
+        if rec["P"] == target_rec["P"]:
+            continue
+        if rec["S"] == target_rec["S"] and rec["C"] == target_rec["C"]:
+            out.append(rec)
+    return out
 
 
 def main():
@@ -101,37 +110,33 @@ def main():
     print(f"Found {len(persons)} persons, {len(all_actions)} actions in dataset.")
 
     total_jobs = 0
+    all_records = []
+    for recs in persons.values():
+        all_records.extend(recs)
     for p, p_records in sorted(persons.items()):
-        tgt = choose_target_skeleton(p_records)
-        if tgt is None:
-            continue
-        have_actions = {rec["A"] for rec in p_records}
-        missing = [a for a in all_actions if a not in have_actions]
-        if not missing:
-            continue
-
         out_dir_person = os.path.join(args.out_root, f"P{p}")
         ensure_dir(out_dir_person)
-
-        for a in missing:
-            src = choose_source_for_action(actions.get(a, []), p)
-            if src is None:
-                continue
-            out_name = expected_out_name_for_2input(src, tgt)
-            out_path = os.path.join(out_dir_person, out_name)
-            if os.path.exists(out_path):
-                print(f"[Skip exists] {out_path}")
-                continue
-
-            print(f"[Plan] P{p} missing A{a}: src={os.path.basename(src['path'])} -> tgt={os.path.basename(tgt['path'])}")
-            if not args.dry_run:
-                try:
-                    run_predict(args.python, repo_root, args.model_path, src["path"], tgt["path"],
-                                out_dir_person, args.height, args.width, args.max_length)
-                except subprocess.CalledProcessError as e:
-                    print(f"[Error] Retarget failed for P{p} A{a}: {e}")
+        for tgt in sorted(p_records, key=lambda r: (r["R"], r["C"], r["S"], r["A"])):
+            src_list = choose_sources_same_sc(tgt, all_records)
+            for src in src_list:
+                out_name = expected_out_name_for_2input(src, tgt)
+                out_path = os.path.join(out_dir_person, out_name)
+                if os.path.exists(out_path):
+                    print(f"[Skip exists] {out_path}")
                     continue
-            total_jobs += 1
+                print(f"[Plan] tgt={tgt['name']} <= src={src['name']}")
+                if not args.dry_run:
+                    try:
+                        run_predict(
+                            args.python, repo_root, args.model_path,
+                            src["path"], tgt["path"],
+                            out_dir_person, args.height, args.width, args.max_length,
+                            fname_suffix=src["P"], no_video=True, only_out12=True
+                        )
+                    except subprocess.CalledProcessError as e:
+                        print(f"[Error] Retarget failed for P{p} A{src['A']}: {e}")
+                        continue
+                total_jobs += 1
 
     print(f"Done. Total retarget jobs executed/planned: {total_jobs}")
 
