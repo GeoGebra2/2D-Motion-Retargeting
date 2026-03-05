@@ -5,7 +5,6 @@ torch
 tqdm
 imageio
 opencv-python
-sklearn
 scikit-learn
 scipy
 matplotlib
