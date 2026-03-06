@@ -6,6 +6,7 @@ import subprocess
 from collections import defaultdict
 from glob import glob
 from tqdm import tqdm
+import random
 
 
 NTU_PATTERN = re.compile(r"S(\d{3})C(\d{3})P(\d{3})R(\d{3})A(\d{3})", re.IGNORECASE)
@@ -79,17 +80,93 @@ def run_predict(python_exec, repo_root, model_path, ntu_src, ntu_tgt, out_dir, h
 
 
 def expected_out_name_for_2input(src_rec, tgt_rec):
-    return f"S{tgt_rec['S']}C{tgt_rec['C']}P{tgt_rec['P']}R{tgt_rec['R']}A{src_rec['A']}F{src_rec['P']}.skeleton"
+    return f"S{tgt_rec['S']}C{tgt_rec['C']}P{tgt_rec['P']}R{tgt_rec['R']}A{src_rec['A']}.skeleton"
 
 
-def choose_sources_same_sc(target_rec, all_records):
-    out = []
-    for rec in all_records:
-        if rec["P"] == target_rec["P"]:
+def by_action_camera(records):
+    m = defaultdict(lambda: defaultdict(list))
+    for r in records:
+        m[r["A"]][r["C"]].append(r)
+    return m
+
+
+def select_targets_for_person(p_records):
+    pam = by_action_camera(p_records)
+    actions_cam1 = [a for a, cdict in pam.items() if "001" in cdict and len(cdict["001"]) > 0]
+    actions_cam2 = [a for a, cdict in pam.items() if "002" in cdict and len(cdict["002"]) > 0]
+    actions_cam3 = [a for a, cdict in pam.items() if "003" in cdict and len(cdict["003"]) > 0]
+
+    random.shuffle(actions_cam1)
+    random.shuffle(actions_cam2)
+    random.shuffle(actions_cam3)
+
+    selected_actions = set()
+    targets = []
+
+    def pick(cam_actions, count, cam_id):
+        picked = 0
+        for a in cam_actions:
+            if a in selected_actions:
+                continue
+            recs = pam[a][cam_id]
+            if not recs:
+                continue
+            tgt = random.choice(recs)
+            targets.append(tgt)
+            selected_actions.add(a)
+            picked += 1
+            if picked >= count:
+                break
+        return picked == count
+
+    ok1 = pick(actions_cam1, 4, "001")
+    ok2 = pick(actions_cam2, 3, "002") if ok1 else False
+    ok3 = pick(actions_cam3, 3, "003") if ok2 else False
+
+    if not (ok1 and ok2 and ok3):
+        return [], set()
+    return targets, selected_actions
+
+
+def pick_sources_for_target(tgt, persons, avoid_persons_set, avoid_actions_set):
+    s = tgt["S"]
+    c = tgt["C"]
+    candidates_persons = [pp for pp in persons.keys() if pp not in avoid_persons_set and pp != tgt["P"]]
+    random.shuffle(candidates_persons)
+
+    used_actions = set()
+    selected_sources = []
+    selected_persons = []
+
+    for sp in candidates_persons:
+        sp_records = persons[sp]
+        # 所有满足同 S 同 C 的动作集合
+        actions_available = set()
+        for r in sp_records:
+            if r["S"] == s and r["C"] == c:
+                actions_available.add(r["A"])
+        # 过滤：不与目标已选动作重复，且不与已选来源动作重复
+        actions_pool = [a for a in actions_available if a not in avoid_actions_set and a not in used_actions]
+        random.shuffle(actions_pool)
+        if len(actions_pool) < 4:
             continue
-        if rec["S"] == target_rec["S"] and rec["C"] == target_rec["C"]:
-            out.append(rec)
-    return out
+        chosen_actions = actions_pool[:4]
+        # 为每个动作挑选一条记录
+        for a in chosen_actions:
+            rr = [r for r in sp_records if r["S"] == s and r["C"] == c and r["A"] == a]
+            if not rr:
+                continue
+            selected_sources.append(random.choice(rr))
+            used_actions.add(a)
+        selected_persons.append(sp)
+        if len(selected_persons) == 3:
+            break
+
+    # 需满足：3 个来源人，每人 4 个不同动作，总计 12 个动作互不重复
+    if len(selected_persons) != 3 or len(selected_sources) < 12:
+        return []
+    # 截断到前 12 条（按每人 4 个）
+    return selected_sources[:12]
 
 
 def main():
@@ -113,13 +190,30 @@ def main():
     all_records = []
     for recs in persons.values():
         all_records.extend(recs)
+
+    target_persons = [f"{i:03d}" for i in range(1, 11)]
     tasks = []
-    for p, p_records in sorted(persons.items()):
+
+    for p in target_persons:
+        if p not in persons:
+            continue
+        p_records = persons[p]
         out_dir_person = os.path.join(args.out_root, f"P{p}")
         ensure_dir(out_dir_person)
-        for tgt in sorted(p_records, key=lambda r: (r["R"], r["C"], r["S"], r["A"])):
-            src_list = choose_sources_same_sc(tgt, all_records)
-            for src in src_list:
+
+        targets, selected_actions = select_targets_for_person(p_records)
+        if len(targets) != 10:
+            print(f"[Skip] P{p}: insufficient targets for 4/3/3 camera distribution with unique 10 actions")
+            continue
+        avoid_persons_set = set(target_persons)
+        avoid_actions_set = set(selected_actions)
+
+        for tgt in targets:
+            srcs = pick_sources_for_target(tgt, persons, avoid_persons_set, avoid_actions_set)
+            if len(srcs) != 12:
+                print(f"[Skip target] {tgt['name']}: insufficient source coverage (need 3 persons × 4 actions)")
+                continue
+            for src in srcs:
                 out_name = expected_out_name_for_2input(src, tgt)
                 out_path = os.path.join(out_dir_person, out_name)
                 if os.path.exists(out_path):
@@ -134,7 +228,7 @@ def main():
                     args.python, repo_root, args.model_path,
                     src["path"], tgt["path"],
                     out_dir_person, args.height, args.width, args.max_length,
-                    fname_suffix=src["P"], no_video=True, only_out12=True
+                    fname_suffix=None, no_video=True, only_out12=True
                 )
             except subprocess.CalledProcessError as e:
                 print(f"[Error] Retarget failed for P{tgt['P']} A{src['A']}: {e}")
