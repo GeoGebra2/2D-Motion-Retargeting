@@ -92,39 +92,65 @@ def by_action_camera(records):
 
 def select_targets_for_person(p_records):
     pam = by_action_camera(p_records)
-    actions_cam1 = [a for a, cdict in pam.items() if "001" in cdict and len(cdict["001"]) > 0]
-    actions_cam2 = [a for a, cdict in pam.items() if "002" in cdict and len(cdict["002"]) > 0]
-    actions_cam3 = [a for a, cdict in pam.items() if "003" in cdict and len(cdict["003"]) > 0]
-
-    random.shuffle(actions_cam1)
-    random.shuffle(actions_cam2)
-    random.shuffle(actions_cam3)
+    eligible_actions = list(pam.keys())
+    if len(eligible_actions) < 20:
+        return [], set()
+    random.shuffle(eligible_actions)
 
     selected_actions = set()
     targets = []
+    for a in eligible_actions:
+        if len(selected_actions) >= 20:
+            break
+        recs_any = []
+        for cam_id, recs in pam[a].items():
+            recs_any.extend(recs)
+        if not recs_any:
+            continue
+        tgt = random.choice(recs_any)
+        targets.append(tgt)
+        selected_actions.add(a)
 
-    def pick(cam_actions, count, cam_id):
-        picked = 0
-        for a in cam_actions:
-            if a in selected_actions:
-                continue
-            recs = pam[a][cam_id]
-            if not recs:
-                continue
-            tgt = random.choice(recs)
-            targets.append(tgt)
-            selected_actions.add(a)
-            picked += 1
-            if picked >= count:
-                break
-        return picked == count
-
-    ok1 = pick(actions_cam1, 4, "001")
-    ok2 = pick(actions_cam2, 3, "002") if ok1 else False
-    ok3 = pick(actions_cam3, 3, "003") if ok2 else False
-
-    if not (ok1 and ok2 and ok3):
+    if len(targets) != 20:
         return [], set()
+
+    needed = {"001", "002", "003"}
+    present = set(t["C"] for t in targets)
+    missing = list(needed - present)
+    # 尝试通过替换/调整实现相机覆盖
+    for cm in missing:
+        done = False
+        # 优先用已选动作在该相机上的样本替换
+        for idx, t in enumerate(targets):
+            a = t["A"]
+            if cm in pam.get(a, {}) and len(pam[a][cm]) > 0 and t["C"] != cm:
+                targets[idx] = random.choice(pam[a][cm])
+                done = True
+                break
+        if done:
+            continue
+        # 尝试用未选动作替换一个目标
+        repl_action = None
+        for a2 in eligible_actions:
+            if a2 in selected_actions:
+                continue
+            if cm in pam.get(a2, {}) and len(pam[a2][cm]) > 0:
+                repl_action = a2
+                break
+        if repl_action is not None:
+            # 替换第一个目标
+            i = 0
+            old_action = targets[i]["A"]
+            targets[i] = random.choice(pam[repl_action][cm])
+            selected_actions.remove(old_action)
+            selected_actions.add(repl_action)
+        else:
+            return [], set()
+
+    present = set(t["C"] for t in targets)
+    if not {"001", "002", "003"}.issubset(present):
+        return [], set()
+
     return targets, selected_actions
 
 
@@ -202,8 +228,8 @@ def main():
         ensure_dir(out_dir_person)
 
         targets, selected_actions = select_targets_for_person(p_records)
-        if len(targets) != 10:
-            print(f"[Skip] P{p}: insufficient targets for 4/3/3 camera distribution with unique 10 actions")
+        if len(targets) != 20:
+            print(f"[Skip] P{p}: insufficient targets for 20 with C1–C3 coverage")
             continue
         avoid_persons_set = set(target_persons)
         avoid_actions_set = set(selected_actions)
