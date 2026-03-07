@@ -154,45 +154,40 @@ def select_targets_for_person(p_records):
     return targets, selected_actions
 
 
-def pick_sources_for_target(tgt, persons, avoid_persons_set, avoid_actions_set):
+def pick_sources_for_target(tgt, persons, avoid_persons_set):
     s = tgt["S"]
     c = tgt["C"]
     candidates_persons = [pp for pp in persons.keys() if pp not in avoid_persons_set and pp != tgt["P"]]
     random.shuffle(candidates_persons)
 
-    used_actions = set()
     selected_sources = []
     selected_persons = []
 
     for sp in candidates_persons:
         sp_records = persons[sp]
-        # 所有满足同 S 同 C 的动作集合
         actions_available = set()
         for r in sp_records:
-            if r["C"] == c:
+            if r["S"] == s and r["C"] == c:
                 actions_available.add(r["A"])
-        # 过滤：不与目标已选动作重复，且不与已选来源动作重复
-        actions_pool = [a for a in actions_available if a not in avoid_actions_set and a not in used_actions]
-        random.shuffle(actions_pool)
-        if len(actions_pool) < 4:
+        if not actions_available:
             continue
+        actions_pool = list(actions_available)
+        random.shuffle(actions_pool)
         chosen_actions = actions_pool[:4]
-        # 为每个动作挑选一条记录
+        person_sources = []
         for a in chosen_actions:
-            rr = [r for r in sp_records if r["C"] == c and r["A"] == a]
+            rr = [r for r in sp_records if r["S"] == s and r["C"] == c and r["A"] == a]
             if not rr:
                 continue
-            selected_sources.append(random.choice(rr))
-            used_actions.add(a)
+            person_sources.append(random.choice(rr))
+        if not person_sources:
+            continue
+        selected_sources.extend(person_sources)
         selected_persons.append(sp)
         if len(selected_persons) == 3:
             break
 
-    # 需满足：3 个来源人，每人 4 个不同动作，总计 12 个动作互不重复
-    if len(selected_persons) != 3 or len(selected_sources) < 12:
-        return []
-    # 截断到前 12 条（按每人 4 个）
-    return selected_sources[:12]
+    return selected_sources
 
 
 def main():
@@ -232,12 +227,10 @@ def main():
             print(f"[Skip] P{p}: insufficient targets for 20 with C1–C3 coverage")
             continue
         avoid_persons_set = set(target_persons)
-        avoid_actions_set = set(selected_actions)
-
         for tgt in targets:
-            srcs = pick_sources_for_target(tgt, persons, avoid_persons_set, avoid_actions_set)
-            if len(srcs) != 12:
-                print(f"[Skip target] {tgt['name']}: insufficient source coverage (need 3 persons × 4 actions)")
+            srcs = pick_sources_for_target(tgt, persons, avoid_persons_set)
+            if not srcs:
+                print(f"[Skip target] {tgt['name']}: no available sources matching S and C")
                 continue
             for src in srcs:
                 out_name = expected_out_name_for_2input(src, tgt)
