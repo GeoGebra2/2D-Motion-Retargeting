@@ -80,7 +80,7 @@ def handle2x(config, args):
                 ca = parse_codes(os.path.basename(args.ntu1))
                 cb = parse_codes(os.path.basename(args.ntu2))
                 if ca and cb:
-                    c12 = {'S': cb['S'], 'C': cb['C'], 'P': cb['P'], 'R': cb['R'], 'A': ca['A']}
+                    c12 = {'S': cb['S'], 'C': cb['C'], 'P': ca['P'], 'R': cb['R'], 'A': ca['A']}
                     c21 = {'S': ca['S'], 'C': ca['C'], 'P': ca['P'], 'R': ca['R'], 'A': cb['A']}
                     out12_name = build_name(c12)
                     out21_name = build_name(c21)

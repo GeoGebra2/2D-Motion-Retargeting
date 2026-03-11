@@ -80,7 +80,7 @@ def run_predict(python_exec, repo_root, model_path, ntu_src, ntu_tgt, out_dir, h
 
 
 def expected_out_name_for_2input(src_rec, tgt_rec):
-    return f"S{tgt_rec['S']}C{tgt_rec['C']}P{tgt_rec['P']}R{tgt_rec['R']}A{src_rec['A']}.skeleton"
+    return f"S{tgt_rec['S']}C{tgt_rec['C']}P{src_rec['P']}R{tgt_rec['R']}A{src_rec['A']}.skeleton"
 
 
 def by_action_camera(records):
