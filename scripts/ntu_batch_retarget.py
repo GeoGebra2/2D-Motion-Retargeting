@@ -190,6 +190,42 @@ def pick_sources_for_target(tgt, persons, avoid_persons_set):
     return selected_sources
 
 
+def pick_targets_for_source(src, persons, avoid_persons_set):
+    s = src["S"]
+    c = src["C"]
+    candidates_persons = [pp for pp in persons.keys() if pp not in avoid_persons_set and pp != src["P"]]
+    random.shuffle(candidates_persons)
+
+    selected_targets = []
+    selected_persons = []
+
+    for tp in candidates_persons:
+        tp_records = persons[tp]
+        actions_available = set()
+        for r in tp_records:
+            if r["S"] == s and r["C"] == c:
+                actions_available.add(r["A"])
+        if not actions_available:
+            continue
+        actions_pool = list(actions_available)
+        random.shuffle(actions_pool)
+        chosen_actions = actions_pool[:7]
+        person_targets = []
+        for a in chosen_actions:
+            rr = [r for r in tp_records if r["S"] == s and r["C"] == c and r["A"] == a]
+            if not rr:
+                continue
+            person_targets.append(random.choice(rr))
+        if not person_targets:
+            continue
+        selected_targets.extend(person_targets)
+        selected_persons.append(tp)
+        if len(selected_persons) == 3:
+            break
+
+    return selected_targets
+
+
 def main():
     parser = argparse.ArgumentParser(description="Batch retarget NTU motions to fill missing actions per person.")
     parser.add_argument("--ntu_root", type=str, required=True, help="NTU skeleton root directory")
@@ -222,17 +258,17 @@ def main():
         out_dir_person = os.path.join(args.out_root, f"P{p}")
         ensure_dir(out_dir_person)
 
-        targets, selected_actions = select_targets_for_person(p_records)
-        if len(targets) != 20:
-            print(f"[Skip] P{p}: insufficient targets for 20 with C1–C3 coverage")
+        sources, selected_actions = select_targets_for_person(p_records)
+        if len(sources) != 20:
+            print(f"[Skip] P{p}: insufficient sources for 20 with C1–C3 coverage")
             continue
         avoid_persons_set = set(target_persons)
-        for tgt in targets:
-            srcs = pick_sources_for_target(tgt, persons, avoid_persons_set)
-            if not srcs:
-                print(f"[Skip target] {tgt['name']}: no available sources matching S and C")
+        for src in sources:
+            tgts = pick_targets_for_source(src, persons, avoid_persons_set)
+            if not tgts:
+                print(f"[Skip source] {src['name']}: no available targets matching S and C")
                 continue
-            for src in srcs:
+            for tgt in tgts:
                 out_name = expected_out_name_for_2input(src, tgt)
                 out_path = os.path.join(out_dir_person, out_name)
                 if os.path.exists(out_path):
@@ -240,7 +276,7 @@ def main():
                 tasks.append((p, out_dir_person, tgt, src, out_path))
 
     for (_, out_dir_person, tgt, src, out_path) in tqdm(tasks, desc="Retarget", unit="job"):
-        print(f"[Plan] tgt={tgt['name']} <= src={src['name']} -> {out_path}")
+        print(f"[Plan] src={src['name']} => tgt={tgt['name']} -> {out_path}")
         if not args.dry_run:
             try:
                 run_predict(
@@ -250,7 +286,7 @@ def main():
                     fname_suffix=None, no_video=True, only_out12=True
                 )
             except subprocess.CalledProcessError as e:
-                print(f"[Error] Retarget failed for P{tgt['P']} A{src['A']}: {e}")
+                print(f"[Error] Retarget failed for P{src['P']} A{src['A']} -> P{tgt['P']}: {e}")
                 continue
 
     print(f"Done. Total retarget jobs executed/planned: {len(tasks)}")
