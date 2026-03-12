@@ -147,14 +147,14 @@ def main():
                         break
                     ai -= 1
                 ai += 1
-        if len(chosen_srcs) < 240:
+        if len(chosen_srcs) < 480:
             rest = [r for r in valid_srcs if r not in chosen_srcs]
             by_act_all = defaultdict(list)
             for r in rest:
                 by_act_all[r["A"]].append(r)
             acts_all = sorted(by_act_all.keys())
             ai = 0
-            while len(chosen_srcs) < 240 and acts_all:
+            while len(chosen_srcs) < 480 and acts_all:
                 a = acts_all[ai % len(acts_all)]
                 lst = by_act_all[a]
                 if lst:
