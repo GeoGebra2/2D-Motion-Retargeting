@@ -4,6 +4,7 @@ from scipy.ndimage import gaussian_filter1d
 import torch
 import argparse
 import numpy as np
+import warnings
 from dataset import get_meanpose
 from model import get_autoencoder
 from functional.visualization import motion2video, hex2rgb
@@ -17,7 +18,15 @@ def handle2x(config, args):
     h2, w2, scale2 = pad_to_height(config.img_size[0], args.img2_height, args.img2_width)
 
     net = get_autoencoder(config)
-    net.load_state_dict(torch.load(args.model_path))
+    try:
+        state = torch.load(args.model_path, weights_only=True)
+    except TypeError:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
+            state = torch.load(args.model_path)
+    if isinstance(state, dict) and 'state_dict' in state:
+        state = state['state_dict']
+    net.load_state_dict(state)
     net.to(config.device)
     net.eval()
 
@@ -81,6 +90,9 @@ def handle2x(config, args):
                 cb = parse_codes(os.path.basename(args.ntu2))
                 if ca and cb:
                     c12 = {'S': cb['S'], 'C': cb['C'], 'P': ca['P'], 'R': cb['R'], 'A': ca['A']}
+                    if getattr(args, 'fname_r_override', None):
+                        r_code = str(args.fname_r_override).zfill(3)
+                        c12['R'] = r_code
                     c21 = {'S': ca['S'], 'C': ca['C'], 'P': ca['P'], 'R': ca['R'], 'A': cb['A']}
                     out12_name = build_name(c12)
                     out21_name = build_name(c21)
@@ -116,7 +128,15 @@ def handle3x(config, args):
     h3, w3, scale3 = pad_to_height(config.img_size[0], args.img2_height, args.img3_width)
 
     net = get_autoencoder(config)
-    net.load_state_dict(torch.load(args.model_path))
+    try:
+        state = torch.load(args.model_path, weights_only=True)
+    except TypeError:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
+            state = torch.load(args.model_path)
+    if isinstance(state, dict) and 'state_dict' in state:
+        state = state['state_dict']
+    net.load_state_dict(state)
     net.to(config.device)
     net.eval()
 
@@ -205,6 +225,7 @@ def main():
     parser.add_argument('--ntu3', type=str, help="ntu skeleton file for input3")
     parser.add_argument('--save_skeleton', action='store_true', help="save outputs as NTU .skeleton files")
     parser.add_argument('--fname_suffix', type=str, help="append Fxxx to skeleton filename (e.g., 001)")
+    parser.add_argument('--fname_r_override', type=str, help="override R code in skeleton filename (3 digits)")
     parser.add_argument('--only_out12', action='store_true', help="only save/compute out12 in 2-input mode")
     parser.add_argument('--no_video', action='store_true', help="do not render videos")
     parser.add_argument('-h1', '--img1_height', type=int, help="video1's height")

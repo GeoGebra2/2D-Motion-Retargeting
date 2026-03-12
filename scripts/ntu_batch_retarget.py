@@ -56,7 +56,7 @@ def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
 
 
-def run_predict(python_exec, repo_root, model_path, ntu_src, ntu_tgt, out_dir, height, width, max_length, fname_suffix=None, no_video=False, only_out12=False):
+def run_predict(python_exec, repo_root, model_path, ntu_src, ntu_tgt, out_dir, height, width, max_length, fname_suffix=None, no_video=False, only_out12=False, r_override=None):
     predict_py = os.path.join(repo_root, "predict.py")
     cmd = [
         python_exec, predict_py,
@@ -76,11 +76,13 @@ def run_predict(python_exec, repo_root, model_path, ntu_src, ntu_tgt, out_dir, h
         cmd.append("--no_video")
     if only_out12:
         cmd.append("--only_out12")
+    if r_override is not None:
+        cmd.extend(["--fname_r_override", str(r_override)])
     subprocess.run(cmd, check=True)
 
 
-def expected_out_name_for_2input(src_rec, tgt_rec):
-    return f"S{tgt_rec['S']}C{tgt_rec['C']}P{src_rec['P']}R{tgt_rec['R']}A{src_rec['A']}.skeleton"
+def expected_out_name_for_2input(src_rec, tgt_rec, r_code):
+    return f"S{tgt_rec['S']}C{tgt_rec['C']}P{src_rec['P']}R{r_code}A{src_rec['A']}.skeleton"
 
 
 def by_action_camera(records):
@@ -250,6 +252,8 @@ def main():
 
     target_persons = [f"{i:03d}" for i in range(1, 11)]
     tasks = []
+    # 记录每个 base(S,C,P,A) 已分配到的最大 R，以避免同一运行中重复
+    base_max_r = {}
 
     for p in target_persons:
         if p not in persons:
@@ -269,21 +273,32 @@ def main():
                 print(f"[Skip source] {src['name']}: no available targets matching S and C")
                 continue
             for tgt in tgts:
-                out_name = expected_out_name_for_2input(src, tgt)
+                base_key = (tgt["S"], tgt["C"], src["P"], src["A"])
+                # 读取目录下已存在的该 base 的 R 序号最大值
+                if base_key not in base_max_r:
+                    pattern = f"S{tgt['S']}C{tgt['C']}P{src['P']}R???A{src['A']}.skeleton"
+                    existing = glob(os.path.join(out_dir_person, pattern))
+                    max_r = 0
+                    for ef in existing:
+                        m = re.search(r'R(\d{3})', os.path.basename(ef))
+                        if m:
+                            max_r = max(max_r, int(m.group(1)))
+                    base_max_r[base_key] = max_r
+                base_max_r[base_key] += 1
+                r_code = f"{base_max_r[base_key]:03d}"
+                out_name = expected_out_name_for_2input(src, tgt, r_code)
                 out_path = os.path.join(out_dir_person, out_name)
-                if os.path.exists(out_path):
-                    continue
-                tasks.append((p, out_dir_person, tgt, src, out_path))
+                tasks.append((p, out_dir_person, tgt, src, out_path, r_code))
 
-    for (_, out_dir_person, tgt, src, out_path) in tqdm(tasks, desc="Retarget", unit="job"):
-        print(f"[Plan] src={src['name']} => tgt={tgt['name']} -> {out_path}")
+    for (_, out_dir_person, tgt, src, out_path, r_code) in tqdm(tasks, desc="Retarget", unit="job"):
+        print(f"[Plan] src={src['name']} => tgt={tgt['name']} (R={r_code}) -> {out_path}")
         if not args.dry_run:
             try:
                 run_predict(
                     args.python, repo_root, args.model_path,
                     src["path"], tgt["path"],
                     out_dir_person, args.height, args.width, args.max_length,
-                    fname_suffix=None, no_video=True, only_out12=True
+                    fname_suffix=None, no_video=True, only_out12=True, r_override=r_code
                 )
             except subprocess.CalledProcessError as e:
                 print(f"[Error] Retarget failed for P{src['P']} A{src['A']} -> P{tgt['P']}: {e}")
