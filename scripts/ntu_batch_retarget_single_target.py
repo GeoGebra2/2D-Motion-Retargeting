@@ -104,23 +104,70 @@ def main():
     out_dir_person = os.path.join(args.out_root, f"P{target_p}")
     ensure_dir(out_dir_person)
 
-    sc_index = defaultdict(list)
-    for p, recs in persons.items():
-        # 仅使用 P001–P010 作为来源；排除目标本人
-        if p == target_p or not (1 <= int(p) <= 10):
-            continue
-        for r in recs:
-            sc_index[(r["S"], r["C"])].append(r)
+    # 目标人按 (S,C) 聚合
+    target_by_sc = defaultdict(list)
+    for tgt in persons[target_p]:
+        target_by_sc[(tgt["S"], tgt["C"])].append(tgt)
 
     base_max_r = {}
     tasks = []
 
-    for tgt in persons[target_p]:
-        key = (tgt["S"], tgt["C"])
-        src_list = sc_index.get(key, [])
-        if not src_list:
+    # 遍历来源人 P001–P010，按动作均衡抽样至最多 240，并保证 C001/C002/C003 至少各 20
+    for p, recs in persons.items():
+        if p == target_p or not (1 <= int(p) <= 10):
             continue
-        for src in src_list:
+        valid_srcs = [r for r in recs if (r["S"], r["C"]) in target_by_sc]
+        if not valid_srcs:
+            continue
+        cams = defaultdict(list)
+        for r in valid_srcs:
+            cams[r["C"]].append(r)
+        chosen_srcs = []
+        for cam_id in ["001", "002", "003"]:
+            cam_list = cams.get(cam_id, [])
+            if not cam_list:
+                continue
+            by_act_cam = defaultdict(list)
+            for r in cam_list:
+                by_act_cam[r["A"]].append(r)
+            acts = sorted(by_act_cam.keys())
+            need = 20
+            ai = 0
+            while need > 0 and acts:
+                a = acts[ai % len(acts)]
+                lst = by_act_cam[a]
+                if lst:
+                    rec_pick = lst.pop()
+                    if rec_pick not in chosen_srcs:
+                        chosen_srcs.append(rec_pick)
+                        need -= 1
+                else:
+                    acts.remove(a)
+                    if not acts:
+                        break
+                    ai -= 1
+                ai += 1
+        if len(chosen_srcs) < 240:
+            rest = [r for r in valid_srcs if r not in chosen_srcs]
+            by_act_all = defaultdict(list)
+            for r in rest:
+                by_act_all[r["A"]].append(r)
+            acts_all = sorted(by_act_all.keys())
+            ai = 0
+            while len(chosen_srcs) < 240 and acts_all:
+                a = acts_all[ai % len(acts_all)]
+                lst = by_act_all[a]
+                if lst:
+                    chosen_srcs.append(lst.pop())
+                else:
+                    acts_all.remove(a)
+                    if not acts_all:
+                        break
+                    ai -= 1
+                ai += 1
+        for idx, src in enumerate(chosen_srcs):
+            tgt_candidates = target_by_sc[(src["S"], src["C"])]
+            tgt = tgt_candidates[idx % len(tgt_candidates)]
             base_key = (tgt["S"], tgt["C"], src["P"], src["A"])
             if base_key not in base_max_r:
                 pattern = f"S{tgt['S']}C{tgt['C']}P{src['P']}R???A{src['A']}.skeleton"
