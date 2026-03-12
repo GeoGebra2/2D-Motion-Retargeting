@@ -132,4 +132,4 @@ If you use this code for your research, please cite our paper:
 NTU扩展批量处理脚本
 `python scripts/ntu_batch_retarget.py --ntu_root dataset/nturgb+d_skeletons --model_path model/pretrained_skeleton.pth --out_root outputs/ntu-batch --height 720 --width 1280 --max_length 120`
 
-`python scripts/ntu_batch_retarget_single_target.py ntu_root dataset/nturgb+d_skeletons model_path model/pretrained_skeleton.pth target_person 023 out_root outputs/ntu-single-P023 height 720 --width 1280 max_length 120`
+`python scripts/ntu_batch_retarget_single_target.py --ntu_root dataset/nturgb+d_skeletons --model_path model/pretrained_skeleton.pth --target_person 023 --out_root outputs/ntu-single-P023 --height 720 --width 1280 --max_length 120`

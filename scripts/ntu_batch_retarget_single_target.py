@@ -106,7 +106,8 @@ def main():
 
     sc_index = defaultdict(list)
     for p, recs in persons.items():
-        if p == target_p:
+        # 仅使用 P001–P010 作为来源；排除目标本人
+        if p == target_p or not (1 <= int(p) <= 10):
             continue
         for r in recs:
             sc_index[(r["S"], r["C"])].append(r)
