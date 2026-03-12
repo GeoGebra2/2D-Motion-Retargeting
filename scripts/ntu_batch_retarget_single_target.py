@@ -77,7 +77,7 @@ def main():
     parser = argparse.ArgumentParser(description="Batch retarget all others to one target person (match S/C, disambiguate by R).")
     parser.add_argument("--ntu_root", type=str, required=True, help="NTU skeleton root directory")
     parser.add_argument("--model_path", type=str, required=True, help="Path to pretrained model (.pth)")
-    parser.add_argument("--target_person", type=str, required=True, help="Target person code (e.g., 005 or P005)")
+    parser.add_argument("--target_person", type=str, required=False, help="Target person code (e.g., 015 or P015). If not set, choose from 011-040 automatically")
     parser.add_argument("--out_root", type=str, default="./outputs/ntu-batch-single", help="Output root directory")
     parser.add_argument("--height", type=int, default=720, help="Canvas height")
     parser.add_argument("--width", type=int, default=1280, help="Canvas width")
@@ -89,10 +89,17 @@ def main():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     persons = scan_ntu(args.ntu_root)
 
-    target_p = canon_person(args.target_person)
-    if target_p not in persons:
-        print(f"Target person P{target_p} not found")
-        return
+    eligible_targets = sorted([p for p in persons.keys() if 11 <= int(p) <= 40])
+    if args.target_person:
+        target_p = canon_person(args.target_person)
+        if target_p not in eligible_targets:
+            print(f"Target person must be within P011-P040 and exist in dataset. Given: P{target_p}")
+            return
+    else:
+        if not eligible_targets:
+            print("No eligible target person found within P011-P040")
+            return
+        target_p = eligible_targets[0]
 
     out_dir_person = os.path.join(args.out_root, f"P{target_p}")
     ensure_dir(out_dir_person)
@@ -154,4 +161,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
