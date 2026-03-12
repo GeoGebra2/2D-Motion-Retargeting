@@ -89,7 +89,7 @@ def main():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     persons = scan_ntu(args.ntu_root)
 
-    eligible_targets = sorted([p for p in persons.keys() if 21 <= int(p) <= 40])
+    eligible_targets = sorted([p for p in persons.keys() if 16 <= int(p) <= 40])
     if args.target_person:
         target_p = canon_person(args.target_person)
         if target_p not in eligible_targets:
@@ -114,7 +114,7 @@ def main():
 
     # 遍历来源人 P001–P010，按动作均衡抽样至最多 240，并保证 C001/C002/C003 至少各 20
     for p, recs in persons.items():
-        if p == target_p or not (1 <= int(p) <= 20):
+        if p == target_p or not (1 <= int(p) <= 15):
             continue
         valid_srcs = [r for r in recs if (r["S"], r["C"]) in target_by_sc]
         if not valid_srcs:
