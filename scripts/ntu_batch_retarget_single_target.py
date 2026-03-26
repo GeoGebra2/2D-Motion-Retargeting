@@ -211,6 +211,16 @@ def main():
                 out_path = os.path.join(out_dir_person, out_name)
             tasks.append((out_dir_person, tgt, src, out_path, r_code))
 
+    # 预统计：每个来源人将产生多少输出骨骼
+    planned_counts = defaultdict(int)
+    for (_, _tgt, src, _out_path, _r_code) in tasks:
+        planned_counts[src["P"]] += 1
+    print("[Plan Summary] planned outputs per source person (P001–P020):")
+    for p_code in sorted([p for p in persons.keys() if 1 <= int(p) <= 20]):
+        cnt = planned_counts.get(p_code, 0)
+        print(f"  P{p_code}: {cnt}")
+    print(f"[Plan Summary] total planned outputs: {len(tasks)}")
+
     for (out_dir_person, tgt, src, out_path, r_code) in tqdm(tasks, desc="Retarget", unit="job"):
         print(f"[Plan] src={src['name']} => tgt={tgt['name']} (R={r_code}) -> {out_path}")
         if args.dry_run:
