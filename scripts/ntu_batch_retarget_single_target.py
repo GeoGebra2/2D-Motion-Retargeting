@@ -84,6 +84,8 @@ def main():
     parser.add_argument("--max_length", type=int, default=120, help="Max frames per sample")
     parser.add_argument("--dry_run", action="store_true", help="Only print plan, do not execute")
     parser.add_argument("--python", type=str, default=sys.executable, help="Python executable for running predict.py")
+    parser.add_argument("--min_per_source", type=int, default=100, help="Minimum mapped samples per source person if available")
+    parser.add_argument("--max_per_source", type=int, default=1000, help="Maximum mapped samples per source person")
     args = parser.parse_args()
 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -147,14 +149,34 @@ def main():
                         break
                     ai -= 1
                 ai += 1
-        if len(chosen_srcs) < 1000:
+        # 先补足到最小下限
+        if len(chosen_srcs) < args.min_per_source:
             rest = [r for r in valid_srcs if r not in chosen_srcs]
             by_act_all = defaultdict(list)
             for r in rest:
                 by_act_all[r["A"]].append(r)
             acts_all = sorted(by_act_all.keys())
             ai = 0
-            while len(chosen_srcs) < 1000 and acts_all:
+            while len(chosen_srcs) < args.min_per_source and acts_all:
+                a = acts_all[ai % len(acts_all)]
+                lst = by_act_all[a]
+                if lst:
+                    chosen_srcs.append(lst.pop())
+                else:
+                    acts_all.remove(a)
+                    if not acts_all:
+                        break
+                    ai -= 1
+                ai += 1
+        # 再在可能的情况下填充到上限
+        if len(chosen_srcs) < args.max_per_source:
+            rest = [r for r in valid_srcs if r not in chosen_srcs]
+            by_act_all = defaultdict(list)
+            for r in rest:
+                by_act_all[r["A"]].append(r)
+            acts_all = sorted(by_act_all.keys())
+            ai = 0
+            while len(chosen_srcs) < args.max_per_source and acts_all:
                 a = acts_all[ai % len(acts_all)]
                 lst = by_act_all[a]
                 if lst:
