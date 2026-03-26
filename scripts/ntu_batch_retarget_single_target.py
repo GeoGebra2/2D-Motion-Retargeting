@@ -86,45 +86,30 @@ def main():
     parser.add_argument("--python", type=str, default=sys.executable, help="Python executable for running predict.py")
     parser.add_argument("--min_per_source", type=int, default=100, help="Minimum mapped samples per source person if available")
     parser.add_argument("--max_per_source", type=int, default=1000, help="Maximum mapped samples per source person")
+    parser.add_argument("--desired_sources", type=int, default=20, help="Desired number of distinct source persons to include")
+    parser.add_argument("--min_per_camera", type=int, default=20, help="Minimum samples per camera (C001/C002/C003) when available")
     args = parser.parse_args()
 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     persons = scan_ntu(args.ntu_root)
 
-    eligible_targets = sorted([p for p in persons.keys() if 21 <= int(p) <= 40])
+    eligible_targets = sorted([p for p in persons.keys()])
     if args.target_person:
         target_p = canon_person(args.target_person)
         if target_p not in eligible_targets:
-            print(f"Target person must be within P011-P040 and exist in dataset. Given: P{target_p}")
+            print(f"Target person must exist in dataset. Given: P{target_p}")
             return
     else:
         if not eligible_targets:
-            print("No eligible target person found within P011-P040")
+            print("No eligible target person found in dataset")
             return
-        target_p = eligible_targets[0]
+        target_p = None
 
-    out_dir_person = os.path.join(args.out_root, f"P{target_p}")
-    ensure_dir(out_dir_person)
-
-    # 目标人按 (S,C) 聚合
-    target_by_sc = defaultdict(list)
-    for tgt in persons[target_p]:
-        target_by_sc[(tgt["S"], tgt["C"])].append(tgt)
-
-    base_max_r = {}
-    tasks = []
-
-    # 遍历来源人 P001–P010，按动作均衡抽样至最多 240，并保证 C001/C002/C003 至少各 20
-    for p, recs in persons.items():
-        if p == target_p or not (1 <= int(p) <= 20):
-            continue
-        valid_srcs = [r for r in recs if (r["S"], r["C"]) in target_by_sc]
-        if not valid_srcs:
-            continue
+    def choose_for_source(valid_srcs, min_per_camera, min_per_source, max_per_source):
         cams = defaultdict(list)
         for r in valid_srcs:
             cams[r["C"]].append(r)
-        chosen_srcs = []
+        chosen = []
         for cam_id in ["001", "002", "003"]:
             cam_list = cams.get(cam_id, [])
             if not cam_list:
@@ -133,15 +118,15 @@ def main():
             for r in cam_list:
                 by_act_cam[r["A"]].append(r)
             acts = sorted(by_act_cam.keys())
-            need = 20
+            need = min_per_camera
             ai = 0
             while need > 0 and acts:
                 a = acts[ai % len(acts)]
                 lst = by_act_cam[a]
                 if lst:
                     rec_pick = lst.pop()
-                    if rec_pick not in chosen_srcs:
-                        chosen_srcs.append(rec_pick)
+                    if rec_pick not in chosen:
+                        chosen.append(rec_pick)
                         need -= 1
                 else:
                     acts.remove(a)
@@ -149,44 +134,92 @@ def main():
                         break
                     ai -= 1
                 ai += 1
-        # 先补足到最小下限
-        if len(chosen_srcs) < args.min_per_source:
-            rest = [r for r in valid_srcs if r not in chosen_srcs]
+        if len(chosen) < min_per_source:
+            rest = [r for r in valid_srcs if r not in chosen]
             by_act_all = defaultdict(list)
             for r in rest:
                 by_act_all[r["A"]].append(r)
             acts_all = sorted(by_act_all.keys())
             ai = 0
-            while len(chosen_srcs) < args.min_per_source and acts_all:
+            while len(chosen) < min_per_source and acts_all:
                 a = acts_all[ai % len(acts_all)]
                 lst = by_act_all[a]
                 if lst:
-                    chosen_srcs.append(lst.pop())
+                    chosen.append(lst.pop())
                 else:
                     acts_all.remove(a)
                     if not acts_all:
                         break
                     ai -= 1
                 ai += 1
-        # 再在可能的情况下填充到上限
-        if len(chosen_srcs) < args.max_per_source:
-            rest = [r for r in valid_srcs if r not in chosen_srcs]
+        if len(chosen) < max_per_source:
+            rest = [r for r in valid_srcs if r not in chosen]
             by_act_all = defaultdict(list)
             for r in rest:
                 by_act_all[r["A"]].append(r)
             acts_all = sorted(by_act_all.keys())
             ai = 0
-            while len(chosen_srcs) < args.max_per_source and acts_all:
+            while len(chosen) < max_per_source and acts_all:
                 a = acts_all[ai % len(acts_all)]
                 lst = by_act_all[a]
                 if lst:
-                    chosen_srcs.append(lst.pop())
+                    chosen.append(lst.pop())
                 else:
                     acts_all.remove(a)
                     if not acts_all:
                         break
                     ai -= 1
                 ai += 1
+        return chosen
+
+    def plan_for_target(target_p):
+        target_by_sc = defaultdict(list)
+        for tgt in persons[target_p]:
+            target_by_sc[(tgt["S"], tgt["C"])].append(tgt)
+        per_source_choices = {}
+        for p, recs in persons.items():
+            if p == target_p:
+                continue
+            valid_srcs = [r for r in recs if (r["S"], r["C"]) in target_by_sc]
+            if not valid_srcs:
+                continue
+            chosen = choose_for_source(valid_srcs, args.min_per_camera, args.min_per_source, args.max_per_source)
+            per_source_choices[p] = chosen
+        return target_by_sc, per_source_choices
+
+    def global_plan():
+        candidates = eligible_targets if target_p is None else [target_p]
+        for k in range(args.desired_sources, 0, -1):
+            best = None
+            for tp in candidates:
+                target_by_sc, per_source_choices = plan_for_target(tp)
+                eligible = [(p, lst) for p, lst in per_source_choices.items() if len(lst) >= args.min_per_source]
+                if len(eligible) >= k:
+                    eligible.sort(key=lambda x: len(x[1]), reverse=True)
+                    selected = eligible[:k]
+                    total = sum(len(lst) for _, lst in selected)
+                    best = (tp, target_by_sc, selected, total)
+                    break
+            if best is not None:
+                return best
+        return None
+
+    plan = global_plan()
+    if plan is None:
+        print("No feasible plan found with any target and any number of sources >=1 satisfying per-source minimum.")
+        return
+    target_p, target_by_sc, selected_sources, _ = plan
+
+    out_dir_person = os.path.join(args.out_root, f"P{target_p}")
+    ensure_dir(out_dir_person)
+    print(f"[Planner] selected target: P{target_p}, sources: {[f'P{p}' for p,_ in selected_sources]}")
+
+    base_max_r = {}
+    tasks = []
+
+    # 使用planner选出的来源人和其被选择的样本
+    for p, chosen_srcs in selected_sources:
+        valid_srcs = chosen_srcs
         for idx, src in enumerate(chosen_srcs):
             tgt_candidates = target_by_sc[(src["S"], src["C"])]
             tgt = tgt_candidates[idx % len(tgt_candidates)]
@@ -215,10 +248,10 @@ def main():
     planned_counts = defaultdict(int)
     for (_, _tgt, src, _out_path, _r_code) in tasks:
         planned_counts[src["P"]] += 1
-    print("[Plan Summary] planned outputs per source person (P001–P020):")
-    for p_code in sorted([p for p in persons.keys() if 1 <= int(p) <= 20]):
-        cnt = planned_counts.get(p_code, 0)
-        print(f"  P{p_code}: {cnt}")
+    selected_source_ids = [p for p, _ in selected_sources]
+    print("[Plan Summary] planned outputs per selected source person:")
+    for p_code in selected_source_ids:
+        print(f"  P{p_code}: {planned_counts.get(p_code, 0)}")
     print(f"[Plan Summary] total planned outputs: {len(tasks)}")
 
     for (out_dir_person, tgt, src, out_path, r_code) in tqdm(tasks, desc="Retarget", unit="job"):
