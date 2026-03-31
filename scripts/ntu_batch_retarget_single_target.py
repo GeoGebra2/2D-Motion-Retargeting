@@ -109,6 +109,10 @@ def main():
         cams = defaultdict(list)
         for r in valid_srcs:
             cams[r["C"]].append(r)
+        required = ["001", "002", "003"]
+        for cam_id in required:
+            if cam_id not in cams or len(cams[cam_id]) < min_per_camera:
+                return []
         chosen = []
         for cam_id in ["001", "002", "003"]:
             cam_list = cams.get(cam_id, [])
